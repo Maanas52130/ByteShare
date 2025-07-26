@@ -1,0 +1,12 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "java",
+            "name": "Launch ByteShare",
+            "request": "launch",
+            "mainClass": "org.example.App",
+            "vmArgs": "--module-path ${workspaceFolder}/.gradle/caches/modules-2/files-2.1/org.openjfx/javafx-controls/17.0.11 --add-modules javafx.controls,javafx.fxml"
+        }
+    ]
+}

@@ -1,0 +1,124 @@
+plugins {
+    id 'application'
+    id 'com.github.johnrengelman.shadow' version '8.1.1'  // For fat JAR
+}
+
+repositories {
+    mavenCentral()
+}
+
+def javaFxVersion = '21.0.2'
+
+// Detect platform
+def platform = org.gradle.internal.os.OperatingSystem.current().isWindows() ? 'win' :
+               (org.gradle.internal.os.OperatingSystem.current().isMacOsX() ? 'mac' : 'linux')
+
+dependencies {
+    // JavaFX dependencies (for development)
+    implementation "org.openjfx:javafx-base:${javaFxVersion}:${platform}"
+    implementation "org.openjfx:javafx-controls:${javaFxVersion}:${platform}"
+    implementation "org.openjfx:javafx-graphics:${javaFxVersion}:${platform}"
+    implementation "org.openjfx:javafx-fxml:${javaFxVersion}:${platform}"
+    implementation "org.openjfx:javafx-swing:${javaFxVersion}:${platform}"
+
+    // ZXing for QR code generation/scanning
+    implementation "com.google.zxing:core:3.5.2"
+    implementation "com.google.zxing:javase:3.5.2"
+
+    // Webcam-capture
+    implementation "com.github.sarxos:webcam-capture:0.3.12"
+
+    // JUnit 5
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0'
+}
+
+application {
+    mainClass = 'org.example.App'
+    applicationDefaultJvmArgs = [
+        '--add-modules', 'jdk.httpserver,jdk.charsets'
+    ]
+}
+
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+    options.release = 21
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+// ---------------- RUN CONFIG ----------------
+tasks.named('run', JavaExec) {
+    doFirst {
+        def modulePath = configurations.runtimeClasspath.asPath
+        jvmArgs = [
+            '--module-path', modulePath,
+            '--add-modules', 'javafx.controls,javafx.fxml,javafx.swing,jdk.httpserver,jdk.charsets'
+        ]
+    }
+}
+
+// ---------------- SHADOW JAR ----------------
+jar {
+    manifest {
+        attributes(
+            'Main-Class': application.mainClass
+        )
+    }
+}
+
+tasks.named('shadowJar') {
+    archiveBaseName.set('app')
+    archiveClassifier.set('all')
+    archiveVersion.set('')
+    manifest {
+        attributes 'Main-Class': application.mainClass
+    }
+}
+
+// ---------------- COPY JAVAFX LIBS ----------------
+tasks.register('copyJavaFxLibs') {
+    doLast {
+        def jfxLibDir = file("$buildDir/jfxlib")
+        jfxLibDir.mkdirs()
+        copy {
+            from configurations.runtimeClasspath.filter { it.name.startsWith('javafx') && it.name.endsWith('.jar') }
+            into jfxLibDir
+        }
+        println "JavaFX JARs copied to: $jfxLibDir"
+    }
+}
+
+// ---------------- JPACKAGE ----------------
+tasks.register('packageApp', Exec) {
+    dependsOn shadowJar
+    dependsOn copyJavaFxLibs
+    doFirst {
+        def outputDir = "$buildDir/package"
+        mkdir outputDir
+
+        commandLine 'jpackage',
+            '--type', 'app-image',
+            '--name', 'ByteShare',
+            '--input', "$buildDir/libs",
+            '--main-jar', 'app-all.jar',
+            '--main-class', 'org.example.App',
+            '--dest', outputDir,
+            '--module-path', "$buildDir/jfxlib",
+            '--add-modules', 'javafx.controls,javafx.fxml,javafx.swing,jdk.httpserver,jdk.charsets',
+            '--win-console'
+    }
+}
+
+// ---------------- PORTABLE ZIP ----------------
+tasks.register('portableZip') {
+    dependsOn 'packageApp'
+    doLast {
+        def imageDir = file("$buildDir/package/ByteShare")
+        def runBat = new File(imageDir, "run.bat")
+        runBat.text = "@echo off\ncd /d \"%~dp0\"\nstart ByteShare.exe\n"
+        ant.zip(destfile: "$buildDir/ByteShare_Portable.zip", basedir: "$buildDir/package")
+        println "Portable package created at: $buildDir/ByteShare_Portable.zip"
+    }
+}

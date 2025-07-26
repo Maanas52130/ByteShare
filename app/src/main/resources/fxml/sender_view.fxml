@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.AnchorPane?>
+<?import javafx.scene.text.Text?>
+<?import javafx.scene.image.ImageView?>
+
+<AnchorPane xmlns:fx="http://javafx.com/fxml"
+            fx:controller="org.example.controller.SenderController"
+            prefWidth="600" prefHeight="700"
+            styleClass="main-background">
+
+    <!-- Title -->
+    <Text text="Sender Mode" layoutX="230" layoutY="50" styleClass="title-text"/>
+
+    <!-- Back Button -->
+    <Button text="Back" layoutX="20" layoutY="20"
+            styleClass="main-button-small"
+            onAction="#onBack"/>
+
+    <!-- Select Files -->
+    <Button text="Select Files" layoutX="200" layoutY="100"
+            prefWidth="200" prefHeight="40"
+            styleClass="main-button"
+            onAction="#onSelectFiles"/>
+
+    <!-- File List -->
+    <ListView fx:id="fileList" layoutX="100" layoutY="160"
+              prefWidth="400" prefHeight="100"
+              styleClass="list-view"/>
+
+    <!-- Generate QR -->
+    <Button text="Generate QR" layoutX="200" layoutY="280"
+            prefWidth="200" prefHeight="40"
+            styleClass="main-button"
+            onAction="#onGenerateQR"/>
+
+    <!-- QR Code Image -->
+    <ImageView fx:id="qrImageView" layoutX="200" layoutY="340"
+               fitWidth="200" fitHeight="200"
+               preserveRatio="true"
+               style="-fx-border-color: #4CAF50; -fx-border-width: 2; -fx-padding: 10;"/>
+
+    <!-- PIN Label -->
+    <Label fx:id="pinLabel" layoutX="250" layoutY="560"
+           text="PIN: ---"
+           style="-fx-font-size: 16px; -fx-font-weight: bold; -fx-text-fill: #333;"/>
+</AnchorPane>

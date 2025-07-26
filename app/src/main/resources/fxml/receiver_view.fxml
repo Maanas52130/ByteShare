@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.text.Text?>
+
+<AnchorPane xmlns:fx="http://javafx.com/fxml"
+            fx:controller="org.example.controller.ReceiverController"
+            prefWidth="600" prefHeight="700"
+            styleClass="main-background">
+
+    <!-- Title -->
+    <Text text="Receiver Mode" layoutX="230" layoutY="40" styleClass="title-text"/>
+
+    <!-- Back Button -->
+    <Button text="Back" layoutX="20" layoutY="20"
+            styleClass="main-button-small"
+            onAction="#onBack"/>
+
+    <!-- Wireless Scan -->
+    <Button text="Wireless Scan" layoutX="200" layoutY="80"
+            prefWidth="200" prefHeight="40"
+            styleClass="main-button"
+            onAction="#onWirelessScan"/>
+
+    <!-- Ripple & Devices Area -->
+    <StackPane fx:id="wirelessScanPane" layoutX="150" layoutY="140"
+               prefWidth="300" prefHeight="250"
+               style="-fx-background-color: #f0f0f0; -fx-border-color: #4CAF50; -fx-border-width: 2; -fx-background-radius: 125; -fx-border-radius: 125;">
+        <Text text="Searching for devices..." styleClass="sub-title-text"/>
+    </StackPane>
+
+    <!-- File List -->
+    <Label text="Available Files:" layoutX="50" layoutY="420" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
+    <ListView fx:id="fileListView" layoutX="50" layoutY="450"
+              prefWidth="500" prefHeight="150"
+              styleClass="list-view"/>
+
+    <!-- Action Buttons -->
+    <Button text="Select All" layoutX="50" layoutY="620"
+            prefWidth="150" prefHeight="35"
+            styleClass="main-button-small"
+            onAction="#onSelectAll"/>
+
+    <Button text="Download Selected" layoutX="400" layoutY="620"
+            prefWidth="150" prefHeight="35"
+            styleClass="main-button-small"
+            onAction="#onDownloadSelected"/>
+</AnchorPane>
