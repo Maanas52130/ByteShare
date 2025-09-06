@@ -1,6 +1,6 @@
 plugins {
     id 'application'
-    id 'com.github.johnrengelman.shadow' version '8.1.1'  // For fat JAR
+    id 'com.github.johnrengelman.shadow' version '8.1.1'
 }
 
 repositories {
@@ -9,19 +9,21 @@ repositories {
 
 def javaFxVersion = '21.0.2'
 
-// Detect platform
 def platform = org.gradle.internal.os.OperatingSystem.current().isWindows() ? 'win' :
                (org.gradle.internal.os.OperatingSystem.current().isMacOsX() ? 'mac' : 'linux')
 
 dependencies {
-    // JavaFX dependencies (for development)
+    // Bouncy Castle (excluded from fat jar)
+    implementation 'org.bouncycastle:bcprov-jdk18on:1.77'
+
+    // JavaFX
     implementation "org.openjfx:javafx-base:${javaFxVersion}:${platform}"
     implementation "org.openjfx:javafx-controls:${javaFxVersion}:${platform}"
     implementation "org.openjfx:javafx-graphics:${javaFxVersion}:${platform}"
     implementation "org.openjfx:javafx-fxml:${javaFxVersion}:${platform}"
     implementation "org.openjfx:javafx-swing:${javaFxVersion}:${platform}"
 
-    // ZXing for QR code generation/scanning
+    // ZXing
     implementation "com.google.zxing:core:3.5.2"
     implementation "com.google.zxing:javase:3.5.2"
 
@@ -35,7 +37,7 @@ dependencies {
 application {
     mainClass = 'org.example.App'
     applicationDefaultJvmArgs = [
-        '--add-modules', 'jdk.httpserver,jdk.charsets'
+        '--add-modules', 'jdk.httpserver,jdk.charsets,java.logging'
     ]
 }
 
@@ -48,26 +50,17 @@ tasks.named('test') {
     useJUnitPlatform()
 }
 
-// ---------------- RUN CONFIG ----------------
 tasks.named('run', JavaExec) {
     doFirst {
         def modulePath = configurations.runtimeClasspath.asPath
         jvmArgs = [
             '--module-path', modulePath,
-            '--add-modules', 'javafx.controls,javafx.fxml,javafx.swing,jdk.httpserver,jdk.charsets'
+            '--add-modules', 'javafx.controls,javafx.fxml,javafx.swing,jdk.httpserver,jdk.charsets,java.logging'
         ]
     }
 }
 
-// ---------------- SHADOW JAR ----------------
-jar {
-    manifest {
-        attributes(
-            'Main-Class': application.mainClass
-        )
-    }
-}
-
+// -------- SHADOW JAR (EXCLUDE BC) --------
 tasks.named('shadowJar') {
     archiveBaseName.set('app')
     archiveClassifier.set('all')
@@ -75,25 +68,36 @@ tasks.named('shadowJar') {
     manifest {
         attributes 'Main-Class': application.mainClass
     }
+    dependencies {
+        exclude(dependency('org.bouncycastle:bcprov-jdk18on'))
+    }
 }
 
-// ---------------- COPY JAVAFX LIBS ----------------
+// -------- COPY JAVA FX LIBS --------
 tasks.register('copyJavaFxLibs') {
     doLast {
         def jfxLibDir = file("$buildDir/jfxlib")
         jfxLibDir.mkdirs()
         copy {
-            from configurations.runtimeClasspath.filter { it.name.startsWith('javafx') && it.name.endsWith('.jar') }
+            from configurations.runtimeClasspath.filter {
+                it.name.startsWith('javafx') && it.name.endsWith('.jar')
+            }
             into jfxLibDir
         }
         println "JavaFX JARs copied to: $jfxLibDir"
     }
 }
 
-// ---------------- JPACKAGE ----------------
+// -------- COPY BOUNCYCASTLE JAR --------
+tasks.register('copyBcprovJar', Copy) {
+    from configurations.runtimeClasspath.filter { it.name.contains("bcprov") }
+    into "$buildDir/libs"
+}
+
+// -------- JPACKAGE --------
 tasks.register('packageApp', Exec) {
-    dependsOn shadowJar
-    dependsOn copyJavaFxLibs
+    dependsOn 'shadowJar', 'copyJavaFxLibs', 'copyBcprovJar'
+
     doFirst {
         def outputDir = "$buildDir/package"
         mkdir outputDir
@@ -106,12 +110,12 @@ tasks.register('packageApp', Exec) {
             '--main-class', 'org.example.App',
             '--dest', outputDir,
             '--module-path', "$buildDir/jfxlib",
-            '--add-modules', 'javafx.controls,javafx.fxml,javafx.swing,jdk.httpserver,jdk.charsets',
+            '--add-modules', 'javafx.controls,javafx.fxml,javafx.swing,jdk.httpserver,jdk.charsets,java.logging',
             '--win-console'
     }
 }
 
-// ---------------- PORTABLE ZIP ----------------
+// -------- ZIP PACKAGE --------
 tasks.register('portableZip') {
     dependsOn 'packageApp'
     doLast {
@@ -119,6 +123,6 @@ tasks.register('portableZip') {
         def runBat = new File(imageDir, "run.bat")
         runBat.text = "@echo off\ncd /d \"%~dp0\"\nstart ByteShare.exe\n"
         ant.zip(destfile: "$buildDir/ByteShare_Portable.zip", basedir: "$buildDir/package")
-        println "Portable package created at: $buildDir/ByteShare_Portable.zip"
+        println "✅ Portable package created at: $buildDir/ByteShare_Portable.zip"
     }
 }

@@ -14,17 +14,24 @@ import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
 import javafx.stage.Stage;
 import javafx.util.Duration;
+import org.example.crypto.CryptoUtils;
+import org.example.crypto.KeyExchangeUtils;
+import org.example.crypto.KeyManager;
 import org.example.network.NetworkScanner;
 
-import java.io.BufferedReader;
-import java.io.InputStream;
-import java.io.InputStreamReader;
+import javax.crypto.SecretKey;
+import java.io.*;
+import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.security.KeyPair;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.util.Base64;
 import java.util.List;
 
 public class ReceiverController {
@@ -37,6 +44,8 @@ public class ReceiverController {
 
     private String currentServerUrl = null;
     private String currentPin = null;
+
+    private SecretKey sessionKey;
 
     @FXML
     private void onBack(javafx.event.ActionEvent event) {
@@ -51,13 +60,11 @@ public class ReceiverController {
         }
     }
 
-    // --- PIN Verification ---
     private void askForPin(String serverUrl) {
         TextInputDialog pinDialog = new TextInputDialog();
         pinDialog.setTitle("Enter PIN");
         pinDialog.setHeaderText("Enter the PIN shown on the sender's screen");
         pinDialog.setContentText("PIN:");
-
         pinDialog.showAndWait().ifPresent(pin -> connectToSender(serverUrl, pin));
     }
 
@@ -72,18 +79,68 @@ public class ReceiverController {
                 if (serverPin.equals(pin)) {
                     currentServerUrl = serverUrl;
                     currentPin = pin;
-                    Platform.runLater(() -> showAlert("Connected", "PIN verified! Fetching file list..."));
+
+                    KeyPair kp = KeyManager.loadOrCreateKeyPair();
+                    PublicKey myPub = kp.getPublic();
+                    PrivateKey myPriv = kp.getPrivate();
+
+                    String pubB64 = KeyExchangeUtils.publicKeyToBase64(myPub);
+                    URL regUrl = new URL(serverUrl + "/register?pin=" + URLEncoder.encode(pin, StandardCharsets.UTF_8));
+                    HttpURLConnection conn = (HttpURLConnection) regUrl.openConnection();
+                    conn.setDoOutput(true);
+                    conn.setRequestMethod("POST");
+                    byte[] payload = pubB64.getBytes(StandardCharsets.UTF_8);
+                    conn.setFixedLengthStreamingMode(payload.length);
+                    conn.setRequestProperty("Content-Type", "text/plain; charset=UTF-8");
+                    conn.connect();
+                    try (OutputStream os = conn.getOutputStream()) { os.write(payload); }
+                    int code = conn.getResponseCode();
+                    conn.disconnect();
+                    if (code != 200) {
+                        Platform.runLater(() -> showAlert("Registration Error", "Sender refused public key registration: HTTP " + code));
+                        return;
+                    }
+
+                    URL wk = new URL(serverUrl + "/wrappedKey?pin=" + URLEncoder.encode(pin, StandardCharsets.UTF_8));
+                    HttpURLConnection wconn = (HttpURLConnection) wk.openConnection();
+                    wconn.setRequestMethod("GET");
+                    int wc = wconn.getResponseCode();
+                    if (wc != 200) {
+                        Platform.runLater(() -> showAlert("Key Error", "Failed to get wrapped key: HTTP " + wc));
+                        wconn.disconnect();
+                        return;
+                    }
+                    String lineEphemeral;
+                    String lineWrapped;
+                    try (BufferedReader br = new BufferedReader(new InputStreamReader(wconn.getInputStream(), StandardCharsets.UTF_8))) {
+                        lineEphemeral = br.readLine();
+                        lineWrapped = br.readLine();
+                    }
+                    wconn.disconnect();
+
+                    if (lineEphemeral == null || lineWrapped == null) {
+                        Platform.runLater(() -> showAlert("Key Error", "Malformed wrapped key response from sender."));
+                        return;
+                    }
+
+                    PublicKey senderEphemeralPub = KeyExchangeUtils.publicKeyFromBase64(lineEphemeral.trim());
+                    byte[] wrappedBytes = Base64.getDecoder().decode(lineWrapped.trim());
+
+                    byte[] aesKeyBytes = KeyExchangeUtils.unwrapAesKeyWithX25519(myPriv, senderEphemeralPub, wrappedBytes);
+                    sessionKey = CryptoUtils.secretKeyFromBytes(aesKeyBytes);
+
+                    Platform.runLater(() -> showAlert("Connected", "PIN verified and key exchanged! Fetching file list..."));
                     fetchFilesFromSender();
                 } else {
                     Platform.runLater(() -> showAlert("PIN Error", "Incorrect PIN!"));
                 }
             } catch (Exception e) {
+                e.printStackTrace();
                 Platform.runLater(() -> showAlert("Connection Error", "Could not connect: " + e.getMessage()));
             }
         }).start();
     }
 
-    // --- Fetch and Download Files ---
     private void fetchFilesFromSender() {
         new Thread(() -> {
             try {
@@ -94,11 +151,8 @@ public class ReceiverController {
 
                 Platform.runLater(() -> {
                     fileListView.getItems().clear();
-                    if (files.isEmpty()) {
-                        fileListView.getItems().add(new CheckBox("No files available."));
-                    } else {
-                        files.forEach(file -> fileListView.getItems().add(new CheckBox(file)));
-                    }
+                    if (files.isEmpty()) fileListView.getItems().add(new CheckBox("No files available."));
+                    else files.forEach(file -> fileListView.getItems().add(new CheckBox(file)));
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> showAlert("Error", "Could not fetch files: " + e.getMessage()));
@@ -108,9 +162,7 @@ public class ReceiverController {
 
     @FXML
     private void onSelectAll() {
-        for (CheckBox cb : fileListView.getItems()) {
-            cb.setSelected(true);
-        }
+        for (CheckBox cb : fileListView.getItems()) cb.setSelected(true);
     }
 
     @FXML
@@ -119,20 +171,9 @@ public class ReceiverController {
             showAlert("Error", "Not connected to a sender.");
             return;
         }
-
-        List<String> selectedFiles = fileListView.getItems().stream()
-                .filter(CheckBox::isSelected)
-                .map(CheckBox::getText)
-                .toList();
-
-        if (selectedFiles.isEmpty()) {
-            showAlert("No Selection", "Please select at least one file to download.");
-            return;
-        }
-
-        for (String file : selectedFiles) {
-            downloadFile(file);
-        }
+        List<String> selectedFiles = fileListView.getItems().stream().filter(CheckBox::isSelected).map(CheckBox::getText).toList();
+        if (selectedFiles.isEmpty()) { showAlert("No Selection", "Please select at least one file to download."); return; }
+        for (String file : selectedFiles) downloadFile(file);
     }
 
     private void downloadFile(String fileName) {
@@ -143,29 +184,43 @@ public class ReceiverController {
                         "&pin=" + URLEncoder.encode(currentPin, StandardCharsets.UTF_8));
 
                 Path savePath = Path.of(System.getProperty("user.home"), "Downloads", fileName);
-                try (InputStream in = url.openStream()) {
-                    Files.copy(in, savePath, StandardCopyOption.REPLACE_EXISTING);
+                Files.createDirectories(savePath.getParent());
+
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("GET");
+                conn.setDoInput(true);
+                int code = conn.getResponseCode();
+                if (code != 200) {
+                    Platform.runLater(() -> showAlert("Download Error", "Server returned HTTP " + code));
+                    conn.disconnect();
+                    return;
                 }
+
+                try (InputStream in = conn.getInputStream();
+                     OutputStream fileOut = Files.newOutputStream(savePath, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                    CryptoUtils.decryptStream(in, fileOut, sessionKey);
+                }
+                conn.disconnect();
+
                 Platform.runLater(() -> showAlert("Download Complete", "File saved to: " + savePath));
             } catch (Exception e) {
+                e.printStackTrace();
                 Platform.runLater(() -> showAlert("Download Error", "Failed to download: " + e.getMessage()));
             }
         }).start();
     }
 
-    // --- Wireless Scan ---
     @FXML
     private void onWirelessScan() {
         startRippleEffect();
         new Thread(() -> {
-            List<String> devices = NetworkScanner.scanNetwork(); // Returns IP:PORT
+            List<String> devices = NetworkScanner.scanNetwork();
             Platform.runLater(() -> displayDevicesAroundRipple(devices));
         }).start();
     }
 
     private void displayDevicesAroundRipple(List<String> devices) {
         wirelessScanPane.getChildren().removeIf(node -> node.getUserData() != null);
-
         if (devices.isEmpty()) {
             Label noDeviceLabel = new Label("No devices found");
             noDeviceLabel.setTextFill(Color.RED);
@@ -177,7 +232,7 @@ public class ReceiverController {
         double radius = 100;
 
         for (int i = 0; i < devices.size(); i++) {
-            String deviceInfo = devices.get(i); // Format: IP:PORT
+            String deviceInfo = devices.get(i);
             String[] parts = deviceInfo.split(":");
             String ip = parts[0];
             String port = (parts.length > 1) ? parts[1] : "80";
